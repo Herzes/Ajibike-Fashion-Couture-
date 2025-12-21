@@ -19,14 +19,20 @@ const STAMPS = [
 const FabricCanvas: React.FC<Props> = ({ onSave }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const colorInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [isDrawing, setIsDrawing] = useState(false);
+  const [hasDrawn, setHasDrawn] = useState(false);
   const [ctx, setCtx] = useState<CanvasRenderingContext2D | null>(null);
   const [overlayCtx, setOverlayCtx] = useState<CanvasRenderingContext2D | null>(null);
   const [symmetry, setSymmetry] = useState<SymmetryMode>('none');
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [customText, setCustomText] = useState("AJIBIKE");
+  
+  // UI States for Retractable Toolbar
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [isPinned, setIsPinned] = useState(false);
 
   const [config, setConfig] = useState<CanvasState & { stamp: string | null }>({
     color: AFRICAN_PALETTE[0],
@@ -78,15 +84,38 @@ const FabricCanvas: React.FC<Props> = ({ onSave }) => {
     };
   };
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !ctx || !canvasRef.current) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = canvasRef.current!;
+        const hRatio = canvas.width / img.width;
+        const vRatio = canvas.height / img.height;
+        const ratio = Math.min(hRatio, vRatio);
+        const centerShift_x = (canvas.width - img.width * ratio) / 2;
+        const centerShift_y = (canvas.height - img.height * ratio) / 2;
+        
+        ctx.globalAlpha = 1;
+        ctx.drawImage(img, 0, 0, img.width, img.height,
+          centerShift_x, centerShift_y, img.width * ratio, img.height * ratio);
+        setHasDrawn(true);
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
   const floodFill = (startX: number, startY: number, fillColor: string) => {
     if (!ctx || !canvasRef.current) return;
     const canvas = canvasRef.current;
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
-    
     const x = Math.floor(startX);
     const y = Math.floor(startY);
-    
     if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return;
 
     const basePos = (y * canvas.width + x) * 4;
@@ -109,64 +138,52 @@ const FabricCanvas: React.FC<Props> = ({ onSave }) => {
     while (stack.length) {
       const [curX, curY] = stack.pop()!;
       if (curX < 0 || curX >= canvas.width || curY < 0 || curY >= canvas.height) continue;
-      
       const idx = curY * canvas.width + curX;
       if (seen[idx]) continue;
-      
       const pos = idx * 4;
-      const r = data[pos];
-      const g = data[pos + 1];
-      const b = data[pos + 2];
-
-      if (Math.abs(r - startR) < 15 && Math.abs(g - startG) < 15 && Math.abs(b - startB) < 15) {
+      if (Math.abs(data[pos] - startR) < 15 && Math.abs(data[pos+1] - startG) < 15 && Math.abs(data[pos+2] - startB) < 15) {
         data[pos] = fr;
         data[pos + 1] = fg;
         data[pos + 2] = fb;
         data[pos + 3] = 255;
         seen[idx] = 1;
-        
-        stack.push([curX + 1, curY]);
-        stack.push([curX - 1, curY]);
-        stack.push([curX, curY + 1]);
-        stack.push([curX, curY - 1]);
+        stack.push([curX + 1, curY], [curX - 1, curY], [curX, curY + 1], [curX, curY - 1]);
       }
     }
     ctx.putImageData(imageData, 0, 0);
   };
 
-  const drawShape = (context: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, isFinal: boolean) => {
+  const drawShape = (context: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) => {
     context.strokeStyle = config.tool === 'eraser' ? '#ffffff' : config.color;
     context.fillStyle = config.tool === 'eraser' ? '#ffffff' : config.color;
     context.lineWidth = config.brushSize;
     context.globalAlpha = config.opacity / 100;
 
-    const draw = (cx: number, cy: number, cw: number, ch: number) => {
+    const { width, height } = canvasRef.current!;
+
+    const drawSingleShape = (cx1: number, cy1: number, cx2: number, cy2: number) => {
       if (config.shapeType === 'circle') {
-        const radius = Math.sqrt(Math.pow(cw - cx, 2) + Math.pow(ch - cy, 2));
+        const radius = Math.sqrt(Math.pow(cx2 - cx1, 2) + Math.pow(cy2 - cy1, 2));
         context.beginPath();
-        context.arc(cx, cy, radius, 0, 2 * Math.PI);
+        context.arc(cx1, cy1, radius, 0, 2 * Math.PI);
         context.stroke();
       } else if (config.shapeType === 'square') {
-        context.strokeRect(cx, cy, cw - cx, ch - cy);
+        context.strokeRect(cx1, cy1, cx2 - cx1, cy2 - cy1);
       } else if (config.shapeType === 'line') {
         context.beginPath();
-        context.moveTo(cx, cy);
-        context.lineTo(cw, ch);
+        context.moveTo(cx1, cy1);
+        context.lineTo(cx2, cy2);
         context.stroke();
       } else if (config.tool === 'text') {
         context.font = `bold ${config.brushSize * 2}px Outfit`;
-        context.fillText(customText, cw, ch);
+        context.fillText(customText, cx2, cy2);
       }
     };
 
-    draw(x1, y1, x2, y2);
-    
-    if (isFinal) {
-      const { width, height } = canvasRef.current!;
-      if (symmetry === 'horizontal' || symmetry === 'quad') draw(width - x1, y1, width - x2, y2);
-      if (symmetry === 'vertical' || symmetry === 'quad') draw(x1, height - y1, x2, height - y2);
-      if (symmetry === 'quad') draw(width - x1, height - y1, width - x2, height - y2);
-    }
+    drawSingleShape(x1, y1, x2, y2);
+    if (symmetry === 'horizontal' || symmetry === 'quad') drawSingleShape(width - x1, y1, width - x2, y2);
+    if (symmetry === 'vertical' || symmetry === 'quad') drawSingleShape(x1, height - y1, x2, height - y2);
+    if (symmetry === 'quad') drawSingleShape(width - x1, height - y1, width - x2, height - y2);
   };
 
   const handleStart = (e: React.MouseEvent | React.TouchEvent) => {
@@ -174,6 +191,7 @@ const FabricCanvas: React.FC<Props> = ({ onSave }) => {
     const pos = getPos(e);
     setStartPos(pos);
     setIsDrawing(true);
+    setHasDrawn(true);
 
     if (config.tool === 'fill') {
       floodFill(pos.x, pos.y, config.color);
@@ -182,7 +200,7 @@ const FabricCanvas: React.FC<Props> = ({ onSave }) => {
     }
 
     if (config.tool === 'text') {
-      drawShape(ctx!, pos.x, pos.y, pos.x, pos.y, true);
+      drawShape(ctx!, pos.x, pos.y, pos.x, pos.y);
       setIsDrawing(false);
       return;
     }
@@ -203,7 +221,7 @@ const FabricCanvas: React.FC<Props> = ({ onSave }) => {
 
     if (config.tool === 'shape') {
       overlayCtx?.clearRect(0, 0, overlayCanvasRef.current!.width, overlayCanvasRef.current!.height);
-      drawShape(overlayCtx!, startPos.x, startPos.y, pos.x, pos.y, false);
+      drawShape(overlayCtx!, startPos.x, startPos.y, pos.x, pos.y);
     } else if (config.tool !== 'fill' && !config.stamp) {
       applySymmetry(pos.x, pos.y, true);
     }
@@ -212,12 +230,10 @@ const FabricCanvas: React.FC<Props> = ({ onSave }) => {
   const handleEnd = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawing) return;
     const pos = getPos(e);
-    
     if (config.tool === 'shape') {
       overlayCtx?.clearRect(0, 0, overlayCanvasRef.current!.width, overlayCanvasRef.current!.height);
-      drawShape(ctx!, startPos.x, startPos.y, pos.x, pos.y, true);
+      drawShape(ctx!, startPos.x, startPos.y, pos.x, pos.y);
     }
-
     setIsDrawing(false);
     if (ctx) ctx.beginPath();
   };
@@ -225,33 +241,13 @@ const FabricCanvas: React.FC<Props> = ({ onSave }) => {
   const applySymmetry = (x: number, y: number, isMove: boolean) => {
     if (!ctx || !canvasRef.current) return;
     const { width, height } = canvasRef.current;
-
     ctx.strokeStyle = config.tool === 'eraser' ? '#ffffff' : config.color;
     ctx.lineWidth = config.brushSize;
 
     const drawPoint = (context: CanvasRenderingContext2D, px: number, py: number, moving: boolean) => {
-      if (config.stamp) {
-        const stamp = STAMPS.find(s => s.id === config.stamp);
-        if (stamp && moving) {
-          context.save();
-          context.translate(px - 15, py - 15);
-          context.scale(3, 3);
-          context.strokeStyle = config.color;
-          context.globalAlpha = config.opacity / 100;
-          context.lineWidth = 1;
-          context.stroke(new Path2D(stamp.path));
-          context.restore();
-        }
-        return;
-      }
-
       context.globalAlpha = config.tool === 'eraser' ? 1 : config.opacity / 100;
-      if (config.hardness < 100 && config.tool !== 'pencil') {
-        context.shadowBlur = (100 - config.hardness) / 2;
-        context.shadowColor = config.tool === 'eraser' ? '#ffffff' : config.color;
-      } else {
-        context.shadowBlur = 0;
-      }
+      context.shadowBlur = (config.hardness < 100 && config.tool !== 'pencil') ? (100 - config.hardness) / 2 : 0;
+      context.shadowColor = config.tool === 'eraser' ? '#ffffff' : config.color;
 
       if (moving) {
         context.lineTo(px, py);
@@ -276,165 +272,266 @@ const FabricCanvas: React.FC<Props> = ({ onSave }) => {
       ctx.shadowBlur = 0;
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      setHasDrawn(false);
     }
   };
 
+  // Visibility logic
+  const handleTableMouseEnter = () => {
+    if (!isPinned) setControlsVisible(false);
+  };
+
+  const handleTableMouseLeave = () => {
+    setControlsVisible(true);
+  };
+
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-4 bg-white p-6 rounded-2xl shadow-sm border border-orange-100 sticky top-4 z-10">
-        <div className="flex flex-wrap items-center gap-6">
-          <div className="flex flex-col gap-2">
-            <div className="flex gap-1.5" aria-label="Color Palette">
-              {AFRICAN_PALETTE.map(c => (
-                <button
-                  key={c}
-                  className={`w-7 h-7 rounded-full border-2 transition-all hover:scale-125 ${config.color === c ? 'border-black scale-110 shadow-md' : 'border-transparent'}`}
-                  style={{ backgroundColor: c }}
-                  onClick={() => setConfig(prev => ({ ...prev, color: c }))}
-                />
-              ))}
-            </div>
-          </div>
+    <div className="flex flex-col gap-6 relative">
+      {/* RETRACTABLE TOOLBAR DRAWER */}
+      <div 
+        className={`fixed top-0 left-0 right-0 z-[100] transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] transform ${
+          controlsVisible || isPinned ? 'translate-y-0 opacity-100' : '-translate-y-[85%] opacity-0 pointer-events-none'
+        }`}
+        onMouseEnter={() => setControlsVisible(true)}
+      >
+        <div className="max-w-5xl mx-auto px-4 pt-6">
+          <div className="bg-white/95 backdrop-blur-md p-6 rounded-b-[2.5rem] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] border-x border-b border-orange-100 relative group/toolbar">
+            
+            {/* Toolbar Pin Button */}
+            <button 
+              onClick={() => setIsPinned(!isPinned)}
+              className={`absolute -bottom-4 left-1/2 -translate-x-1/2 p-2 rounded-full shadow-lg transition-all ${isPinned ? 'bg-orange-600 text-white scale-110' : 'bg-white text-stone-400 hover:text-orange-600'}`}
+              title={isPinned ? "Unlock Toolbar" : "Pin Toolbar"}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2v20M2 12h20M7 7l10 10M17 7L7 10" className={isPinned ? 'hidden' : 'block'} /><path d="M21 21l-6-6m0 0V9m0 6H9" className={isPinned ? 'block' : 'hidden'} /></svg>
+            </button>
 
-          <div className="h-8 w-[1px] bg-orange-100 hidden lg:block" />
+            <div className="flex flex-wrap items-center gap-6 justify-center">
+              {/* COLOR PALETTE WITH SPECTRUM */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-1.5" aria-label="Color Palette">
+                  {/* Spectrum Picker Button */}
+                  <div className="relative group/spectrum">
+                    <button
+                      onClick={() => colorInputRef.current?.click()}
+                      className="w-10 h-10 rounded-full shadow-md transition-all hover:scale-110 border-2 border-white overflow-hidden p-[2px]"
+                      style={{ 
+                        background: 'conic-gradient(red, yellow, lime, aqua, blue, magenta, red)',
+                      }}
+                      title="Custom Color Spectrum"
+                    >
+                      <div 
+                        className="w-full h-full rounded-full border border-black/10" 
+                        style={{ backgroundColor: config.color }} 
+                      />
+                    </button>
+                    <input 
+                      ref={colorInputRef}
+                      type="color" 
+                      className="absolute opacity-0 pointer-events-none w-0 h-0"
+                      value={config.color}
+                      onChange={(e) => setConfig(prev => ({ ...prev, color: e.target.value }))}
+                    />
+                  </div>
 
-          <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl">
-            {[
-              { id: 'brush', icon: 'M12 19l7-7 3 3-7 7-3-3z M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z', label: 'Brush' },
-              { id: 'watercolor', icon: 'M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z', label: 'Watercolor' },
-              { id: 'fill', icon: 'M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z', label: 'Pour Paint' },
-              { id: 'text', icon: 'M4 7V4h16v3M9 20h6M12 4v16', label: 'Text' },
-              { id: 'shape', icon: 'M21 3H3v18h18V3z', label: 'Shapes' },
-              { id: 'eraser', icon: 'm7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21Z', label: 'Eraser' }
-            ].map(tool => (
-              <button
-                key={tool.id}
-                onClick={() => setConfig(prev => ({ ...prev, tool: tool.id as any, stamp: null }))}
-                className={`p-2.5 rounded-lg transition-all ${config.tool === tool.id && !config.stamp ? 'bg-orange-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-200'}`}
-                title={tool.label}
-              >
-                <div className="flex flex-col items-center gap-0.5">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={tool.icon} /></svg>
-                  <span className="text-[7px] font-bold uppercase">{tool.label}</span>
+                  <div className="h-6 w-[1px] bg-stone-200 mx-1" />
+
+                  {AFRICAN_PALETTE.map(c => (
+                    <button
+                      key={c}
+                      className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-125 ${config.color === c ? 'border-black scale-110 shadow-md ring-2 ring-orange-200' : 'border-transparent'}`}
+                      style={{ backgroundColor: c }}
+                      onClick={() => setConfig(prev => ({ ...prev, color: c }))}
+                    />
+                  ))}
                 </div>
-              </button>
-            ))}
-          </div>
+              </div>
 
-          <div className="h-8 w-[1px] bg-orange-100 hidden lg:block" />
+              <div className="h-10 w-[1px] bg-orange-100 hidden lg:block" />
 
-          <div className="flex items-center gap-1.5 bg-gray-50 p-1 rounded-xl">
-             {(['none', 'horizontal', 'vertical', 'quad'] as SymmetryMode[]).map(mode => (
-              <button
-                key={mode}
-                onClick={() => setSymmetry(mode)}
-                className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${symmetry === mode ? 'bg-orange-100 text-orange-700' : 'text-gray-400 hover:bg-gray-200'}`}
-              >
-                {mode === 'none' ? 'Off' : mode}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-1.5" aria-label="African Stamps">
-            {STAMPS.map(stamp => (
-              <button
-                key={stamp.id}
-                onClick={() => setConfig(prev => ({ ...prev, stamp: stamp.id, tool: 'brush' }))}
-                className={`p-2 rounded-lg transition-all border-2 ${config.stamp === stamp.id ? 'border-orange-500 bg-orange-50' : 'border-transparent bg-gray-50 hover:bg-gray-100'}`}
-                title={stamp.label}
-              >
-                <svg width="18" height="18" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"><path d={stamp.path} /></svg>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 pt-4 border-t border-orange-50 items-end">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-gray-500 uppercase">Brush Size ({config.brushSize}px)</label>
-            <input type="range" min="1" max="150" value={config.brushSize} onChange={(e) => setConfig(prev => ({ ...prev, brushSize: parseInt(e.target.value) }))} className="accent-orange-500" />
-          </div>
-
-          {config.tool === 'text' && (
-            <div className="flex flex-col gap-1 md:col-span-2">
-              <label className="text-[10px] font-bold text-gray-500 uppercase">Pattern Text (Yoruba words/Names)</label>
-              <input 
-                type="text" 
-                value={customText} 
-                onChange={(e) => setCustomText(e.target.value)}
-                className="p-2 border rounded-lg text-sm bg-orange-50 border-orange-200 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                placeholder="Type here..."
-              />
-            </div>
-          )}
-
-          {config.tool === 'shape' && (
-            <div className="flex flex-col gap-1 md:col-span-2">
-              <label className="text-[10px] font-bold text-gray-500 uppercase">Select Shape</label>
-              <div className="flex gap-2">
-                {(['circle', 'square', 'line'] as const).map(s => (
-                  <button 
-                    key={s}
-                    onClick={() => setConfig(prev => ({ ...prev, shapeType: s }))}
-                    className={`flex-1 p-2 rounded-lg border text-xs capitalize ${config.shapeType === s ? 'bg-orange-600 text-white' : 'bg-gray-50'}`}
+              <div className="flex items-center gap-2 bg-stone-100 p-1 rounded-2xl">
+                {[
+                  { id: 'brush', icon: 'M12 19l7-7 3 3-7 7-3-3z M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z', label: 'Brush' },
+                  { id: 'watercolor', icon: 'M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z', label: 'Watercolor' },
+                  { id: 'fill', icon: 'M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z', label: 'Pour' },
+                  { id: 'text', icon: 'M4 7V4h16v3M9 20h6M12 4v16', label: 'Text' },
+                  { id: 'shape', icon: 'M21 3H3v18h18V3z', label: 'Shapes' },
+                  { id: 'eraser', icon: 'm7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21Z', label: 'Eraser' }
+                ].map(tool => (
+                  <button
+                    key={tool.id}
+                    onClick={() => setConfig(prev => ({ ...prev, tool: tool.id as any, stamp: null }))}
+                    className={`flex flex-col items-center gap-1 p-3 rounded-xl transition-all ${config.tool === tool.id && !config.stamp ? 'bg-orange-600 text-white shadow-lg scale-105' : 'text-stone-500 hover:bg-stone-200'}`}
+                    title={tool.label}
                   >
-                    {s}
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={tool.icon} /></svg>
+                    <span className="text-[8px] font-black uppercase tracking-tighter">{tool.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="h-10 w-[1px] bg-orange-100 hidden lg:block" />
+
+              <div className="flex items-center gap-1.5 bg-stone-100 p-1.5 rounded-xl">
+                 {(['none', 'horizontal', 'vertical', 'quad'] as SymmetryMode[]).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setSymmetry(mode)}
+                    className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${symmetry === mode ? 'bg-orange-100 text-orange-700 shadow-sm' : 'text-stone-400 hover:bg-stone-200'}`}
+                  >
+                    {mode === 'none' ? 'Single' : mode}
                   </button>
                 ))}
               </div>
             </div>
-          )}
 
-          <div className="flex justify-end gap-2 md:col-start-4">
-             <button onClick={clearCanvas} className="text-[10px] font-bold text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors uppercase tracking-widest">Reset Canva</button>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 pt-4 border-t border-stone-100 items-end mt-4">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex justify-between">
+                  <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Brush Size</label>
+                  <span className="text-[10px] font-mono text-orange-600">{config.brushSize}px</span>
+                </div>
+                <input type="range" min="1" max="150" value={config.brushSize} onChange={(e) => setConfig(prev => ({ ...prev, brushSize: parseInt(e.target.value) }))} className="accent-orange-600 h-1.5" />
+              </div>
+
+              {config.tool === 'text' && (
+                <div className="flex flex-col gap-1.5 md:col-span-2">
+                  <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Pattern Text</label>
+                  <input type="text" value={customText} onChange={(e) => setCustomText(e.target.value)} className="p-3 border-2 border-stone-100 rounded-xl text-sm bg-stone-50 focus:border-orange-400 focus:bg-white transition-all outline-none" placeholder="Type pattern text..." />
+                </div>
+              )}
+
+              {config.tool === 'shape' && (
+                <div className="flex flex-col gap-1.5 md:col-span-2">
+                  <label className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Select Shape</label>
+                  <div className="flex gap-2">
+                    {(['circle', 'square', 'line'] as const).map(s => (
+                      <button key={s} onClick={() => setConfig(prev => ({ ...prev, shapeType: s }))} className={`flex-1 py-2.5 rounded-xl border-2 text-xs font-bold capitalize transition-all ${config.shapeType === s ? 'bg-orange-600 border-orange-600 text-white shadow-md' : 'bg-stone-50 border-stone-100 text-stone-600 hover:border-orange-200'}`}>{s}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 md:col-start-4">
+                 {/* Upload Button */}
+                 <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-[10px] font-black text-orange-600 hover:bg-orange-50 px-4 py-2.5 rounded-xl transition-all uppercase tracking-widest border border-orange-100 flex items-center gap-2"
+                 >
+                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                   Upload Image
+                 </button>
+                 <input 
+                  ref={fileInputRef}
+                  type="file" 
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleImageUpload}
+                 />
+                 <button onClick={clearCanvas} className="text-[10px] font-black text-red-500 hover:bg-red-50 px-4 py-2.5 rounded-xl transition-all uppercase tracking-widest border border-transparent hover:border-red-100">Clear Table</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="relative bg-white rounded-3xl shadow-2xl border-[12px] border-orange-50 overflow-hidden cursor-crosshair touch-none">
-        <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[url('https://www.transparenttextures.com/patterns/fabric-of-the-nation.png')]" />
-        
-        {symmetry !== 'none' && (
-          <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-10">
-            {(symmetry === 'horizontal' || symmetry === 'quad') && <div className="absolute inset-y-0 w-[2px] bg-orange-600 left-1/2 -translate-x-1/2" />}
-            {(symmetry === 'vertical' || symmetry === 'quad') && <div className="absolute inset-x-0 h-[2px] bg-orange-600 top-1/2 -translate-y-1/2" />}
-          </div>
-        )}
-
-        <canvas
-          ref={canvasRef}
-          width={1200}
-          height={900}
-          onMouseDown={handleStart}
-          onMouseMove={handleMove}
-          onMouseUp={handleEnd}
-          onMouseLeave={handleEnd}
-          onTouchStart={handleStart}
-          onTouchMove={handleMove}
-          onTouchEnd={handleEnd}
-          className="w-full h-auto aspect-[4/3]"
-        />
-        
-        <canvas
-          ref={overlayCanvasRef}
-          width={1200}
-          height={900}
-          className="absolute inset-0 pointer-events-none w-full h-auto aspect-[4/3]"
-        />
+      {/* PERSISTENT PULL-DOWN TRIGGER (Invisible but hover-active) */}
+      <div 
+        className="fixed top-0 left-0 right-0 h-4 z-[101] cursor-pointer group/trigger"
+        onMouseEnter={() => setControlsVisible(true)}
+      >
+        <div className={`mx-auto w-32 h-1 bg-stone-200 rounded-full mt-1 transition-all ${controlsVisible ? 'opacity-0' : 'opacity-100 group-hover/trigger:bg-orange-400 group-hover/trigger:w-48'}`} />
       </div>
 
-      <div className="flex flex-col items-center gap-4">
+      {/* THE STUDIO TABLE */}
+      <div 
+        className="relative group bg-stone-200 p-8 md:p-16 rounded-[4rem] shadow-inner border-[1px] border-stone-300 transition-all duration-500 mt-12"
+        onMouseEnter={handleTableMouseEnter}
+        onMouseLeave={handleTableMouseLeave}
+      >
+        {/* Designer Pins */}
+        <div className="absolute top-12 left-12 w-4 h-4 bg-stone-400 rounded-full shadow-md z-10 border-b-2 border-stone-500" />
+        <div className="absolute top-12 right-12 w-4 h-4 bg-stone-400 rounded-full shadow-md z-10 border-b-2 border-stone-500" />
+        <div className="absolute bottom-12 left-12 w-4 h-4 bg-stone-400 rounded-full shadow-md z-10 border-b-2 border-stone-500" />
+        <div className="absolute bottom-12 right-12 w-4 h-4 bg-stone-400 rounded-full shadow-md z-10 border-b-2 border-stone-500" />
+
+        <div className={`relative bg-white rounded-lg transition-all duration-700 ${!controlsVisible && !isPinned ? 'shadow-[0_40px_100px_rgba(0,0,0,0.3)] ring-4 ring-orange-100/30' : 'shadow-[0_20px_50px_rgba(0,0,0,0.2)] ring-1 ring-stone-100'} border-[20px] border-white overflow-hidden cursor-crosshair touch-none`}>
+          
+          {!hasDrawn && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10 bg-white/40 backdrop-blur-[1px]">
+               <div className="bg-white/90 p-8 rounded-full shadow-xl border border-orange-100 flex flex-col items-center animate-bounce">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#ea580c" strokeWidth="2.5"><path d="M12 19l7-7 3 3-7 7-3-3z M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /></svg>
+               </div>
+               <p className="mt-4 text-orange-600 font-black uppercase tracking-[0.3em] text-sm">Sketch Your Pattern Here</p>
+               <p className="text-stone-400 text-xs mt-1 font-medium">Controls hide automatically while designing</p>
+            </div>
+          )}
+
+          <div className="absolute inset-0 pointer-events-none opacity-[0.06] mix-blend-multiply bg-[url('https://www.transparenttextures.com/patterns/fabric-of-the-nation.png')] z-[5]" />
+          
+          {symmetry !== 'none' && (
+            <div className="absolute inset-0 pointer-events-none z-[6]">
+              {(symmetry === 'horizontal' || symmetry === 'quad') && (
+                <>
+                  <div className="absolute inset-y-0 left-1/2 w-px border-l-2 border-dashed border-orange-400/40 -translate-x-1/2" />
+                  <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white px-2 py-0.5 rounded-full border border-orange-100 text-[8px] font-black text-orange-400 uppercase tracking-tighter">Y-Reflect</div>
+                </>
+              )}
+              {(symmetry === 'vertical' || symmetry === 'quad') && (
+                <>
+                  <div className="absolute inset-x-0 top-1/2 h-px border-t-2 border-dashed border-orange-400/40 -translate-y-1/2" />
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 -rotate-90 bg-white px-2 py-0.5 rounded-full border border-orange-100 text-[8px] font-black text-orange-400 uppercase tracking-tighter">X-Reflect</div>
+                </>
+              )}
+            </div>
+          )}
+
+          <canvas
+            ref={canvasRef}
+            width={1200}
+            height={900}
+            onMouseDown={handleStart}
+            onMouseMove={handleMove}
+            onMouseUp={handleEnd}
+            onMouseLeave={handleEnd}
+            onTouchStart={handleStart}
+            onTouchMove={handleMove}
+            onTouchEnd={handleEnd}
+            className="w-full h-auto aspect-[4/3] bg-white"
+          />
+          
+          <canvas
+            ref={overlayCanvasRef}
+            width={1200}
+            height={900}
+            className="absolute inset-0 pointer-events-none w-full h-auto aspect-[4/3] z-[8]"
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center gap-6 mt-8">
         <button
           onClick={() => onSave(canvasRef.current!.toDataURL('image/png'))}
-          className="bg-orange-600 hover:bg-orange-700 text-white font-black py-5 px-16 rounded-3xl shadow-2xl transition-all transform hover:scale-105 active:scale-95 text-xl uppercase tracking-[0.2em] flex items-center gap-4"
+          className="group relative bg-black text-white font-black py-6 px-20 rounded-[2rem] shadow-2xl transition-all transform hover:scale-105 active:scale-95 text-2xl uppercase tracking-[0.25em] overflow-hidden"
         >
-          <span>Confirm Bespoke Pattern</span>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          <div className="absolute inset-0 bg-gradient-to-r from-orange-600 to-red-600 translate-y-full group-hover:translate-y-0 transition-transform duration-500 ease-out" />
+          <span className="relative z-10 flex items-center gap-4">
+            <span>Confirm Bespoke Pattern</span>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="group-hover:translate-x-2 transition-transform"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </span>
         </button>
-        <div className="flex gap-4 text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-           <span>Dimensions • Patterns • Lines • Shapes</span>
-           <span>•</span>
-           <span>Ajibikes Studio</span>
+        
+        <div className="flex items-center gap-6 px-8 py-3 bg-stone-100 rounded-full border border-stone-200">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full animate-pulse ${!controlsVisible && !isPinned ? 'bg-orange-500' : 'bg-green-500'}`} />
+            <span className="text-[10px] text-stone-500 font-black uppercase tracking-widest">
+              {!controlsVisible && !isPinned ? 'Studio Focus Mode' : 'Standard Editing Mode'}
+            </span>
+          </div>
+          <div className="h-3 w-[1px] bg-stone-300" />
+          <span className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">1200 x 900 DPI</span>
+          <div className="h-3 w-[1px] bg-stone-300" />
+          <span className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Ajibikes Signature Edition</span>
         </div>
       </div>
     </div>
