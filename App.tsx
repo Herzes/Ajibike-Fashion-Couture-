@@ -15,11 +15,12 @@ const App: React.FC = () => {
   const [details, setDetails] = useState<FashionDetails>({
     style: 'Gown',
     occasion: 'Wedding',
-    audience: 'Adult',
+    audience: 'Female',
     hairPreference: '',
     shoePreference: '',
     jewelryPreference: '',
     accessories: [],
+    additionalInfo: '',
   });
 
   const handlePatternSave = (base64: string) => {
@@ -41,6 +42,10 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleRefresh = async () => {
+    await handleGenerate();
   };
 
   return (
@@ -72,7 +77,7 @@ const App: React.FC = () => {
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
             <div className="text-center mb-8">
               <h2 className="text-3xl font-bold text-gray-800 italic">Create Your Pattern</h2>
-              <p className="text-gray-500 mt-2">Use pencils, brushes, or upload an image to sketch your unique Ankara design.</p>
+              <p className="text-gray-500 mt-2">Use pencils, brushes, motifs, or upload an image to sketch your unique Ankara design.</p>
             </div>
             <FabricCanvas onSave={handlePatternSave} />
           </div>
@@ -88,7 +93,7 @@ const App: React.FC = () => {
                  </button>
                </div>
                <div>
-                 <h2 className="text-2xl font-bold text-gray-800">Next Step: Styling</h2>
+                 <h2 className="text-2xl font-bold text-gray-800 italic">Next Step: Styling</h2>
                  <p className="text-gray-500">Define the garment and accessories for your fabric.</p>
                </div>
              </div>
@@ -103,11 +108,15 @@ const App: React.FC = () => {
 
         {step === 'results' && (
           <div className="animate-in zoom-in-95 duration-700">
-            <DesignGallery images={generatedImages} />
+            <DesignGallery 
+              images={generatedImages} 
+              onRefresh={handleRefresh}
+              isLoading={loading}
+            />
             <div className="mt-12 text-center">
                <button 
                 onClick={() => setStep('canvas')}
-                className="bg-orange-100 text-orange-700 px-8 py-3 rounded-full font-bold hover:bg-orange-200 transition-colors"
+                className="bg-black text-white px-10 py-4 rounded-full font-black uppercase tracking-widest hover:bg-orange-600 transition-colors shadow-2xl"
                >
                  Start New Creation
                </button>

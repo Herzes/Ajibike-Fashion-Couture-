@@ -49,18 +49,18 @@ const GarmentForm: React.FC<Props> = ({ details, onChange, onSubmit, isLoading }
           <select 
             value={details.occasion}
             onChange={(e) => updateField('occasion', e.target.value as Occasion)}
-            className="w-full p-4 rounded-xl border-2 border-gray-100 focus:border-orange-400 focus:ring-0 text-gray-700"
+            className="w-full p-4 rounded-xl border-2 border-gray-100 focus:border-orange-400 focus:ring-0 text-gray-700 bg-white"
           >
             {OCCASIONS.map(occ => <option key={occ} value={occ}>{occ}</option>)}
           </select>
 
           <label className="block text-sm font-bold text-orange-800 uppercase tracking-widest mt-6">Target Audience</label>
-          <div className="flex gap-4">
-            {(['Adult', 'Child'] as Audience[]).map(aud => (
+          <div className="flex gap-2">
+            {(['Male', 'Female', 'Child'] as Audience[]).map(aud => (
               <button
                 key={aud}
                 onClick={() => updateField('audience', aud)}
-                className={`flex-1 p-3 rounded-xl border-2 text-sm transition-all ${details.audience === aud ? 'bg-orange-600 text-white border-orange-600' : 'bg-white text-gray-700 border-gray-100 hover:border-orange-200'}`}
+                className={`flex-1 p-3 rounded-xl border-2 text-sm transition-all ${details.audience === aud ? 'bg-orange-600 text-white border-orange-600 shadow-md' : 'bg-white text-gray-700 border-gray-100 hover:border-orange-200'}`}
               >
                 {aud}
               </button>
@@ -70,8 +70,8 @@ const GarmentForm: React.FC<Props> = ({ details, onChange, onSubmit, isLoading }
             <input 
               type="text"
               placeholder="Child's Age (e.g., 5 years old)"
-              className="w-full p-4 rounded-xl border-2 border-gray-100 focus:border-orange-400 mt-2"
-              value={details.age}
+              className="w-full p-4 rounded-xl border-2 border-gray-100 focus:border-orange-400 mt-2 outline-none"
+              value={details.age || ''}
               onChange={(e) => updateField('age', e.target.value)}
             />
           )}
@@ -125,6 +125,19 @@ const GarmentForm: React.FC<Props> = ({ details, onChange, onSubmit, isLoading }
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Additional Info Box */}
+        <div className="md:col-span-2 space-y-2 mt-4">
+          <label className="block text-sm font-bold text-orange-800 uppercase tracking-widest">Additional Designer Notes</label>
+          <p className="text-xs text-stone-400 italic">Describe any specific variations, silhouettes, or cultural nuances you'd like the AI to capture.</p>
+          <textarea
+            rows={4}
+            placeholder="e.g. Make the sleeves flared with lace trimmings, ensure a floor-length silhouette, or add a modern twist to the traditional headwrap..."
+            className="w-full p-4 rounded-2xl border-2 border-gray-100 bg-gray-50 focus:bg-white focus:border-orange-400 transition-all outline-none resize-none text-gray-700"
+            value={details.additionalInfo || ''}
+            onChange={(e) => updateField('additionalInfo', e.target.value)}
+          />
         </div>
       </div>
 
